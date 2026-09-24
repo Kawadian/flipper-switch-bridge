@@ -13,7 +13,41 @@ Flipper Zero を、USB接続のNintendo Switch用コントローラーとして�
 
 USBの低レベル関数は外部アプリ（FAP）向けSDKに公開されていないため、Flipper側は**公式ファームウェアに組み込んでビルド**します。PC側は通常のPythonパッケージです。純正ファームウェアへの変更はアプリの追加だけで、既存のUSBモードをアプリ終了時に復元します。
 
-## Flipper側のビルド
+## 導入方法
+
+### 1. Flipper用ファームウェアを入手する
+
+[GitHub Actions の「Build Flipper firmware」](https://github.com/Kawadian/flipper-switch-bridge/actions/workflows/build-firmware.yml)を開き、`Run workflow` → `main` → `Run workflow` を選びます。完了した実行を開き、画面下部の `Artifacts` から `flipper-switch-update` をダウンロードします。GitHubからダウンロードしたZIPを**一度解凍**すると `flipper-switch-update.tgz` が入っています。Flipperにインストールするファイルは、この `.tgz` です。
+
+FlipperをPCへUSB接続し、[qFlipper](https://docs.flipper.net/zero/qflipper)の詳細設定にある `Install from file` で `.tgz` を選びます。現在のファームウェアを書き換えるため、設定を手元にも残したい場合はqFlipperのバックアップ機能で先に保存してください。更新後、Flipperのメニューに `Switch Controller` が現れます。
+
+microSDから更新する場合は `.tgz` を解凍し、内部の `f7-update-*` フォルダをSDカードの `update` フォルダにコピーして、Flipperのファイルブラウザから `update.fuf` を実行します。
+
+### 2. PC側をインストールする
+
+WindowsでBluetoothを使えるPCにリポジトリを取得して、次を実行します。
+
+```bash
+git clone https://github.com/Kawadian/flipper-switch-bridge.git
+cd flipper-switch-bridge
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\flipper-link.exe scan
+```
+
+Flipperで `Switch Controller` → `BLE receiver` を選択すると、SwitchなしでBLE接続を試せます。`scan` で表示されたアドレスを使い、PowerShellで次を実行してFlipper画面の受信数を確認します。
+
+```powershell
+.\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" tap A
+```
+
+### 3. Switchに接続する
+
+まずFlipperの `Switch Controller` → `USB gamepad` を選び、FlipperのUSB-C端子をデータ通信できるケーブルで初代SwitchのドックのUSB-A端子につなぎます。Switchで「設定 → コントローラーとセンサー → Proコントローラーの有線通信」をオンにして、FlipperのOKボタンでA入力を試します。
+
+PCから操作するときはFlipperで `BLE -> USB` を選び、PCから同じ `flipper-link` コマンドを実行します。BACK長押しでアプリを終了します。実機でのSwitch認識と入力はまだ未検証です。
+
+## Flipper側をローカルでビルドする
 
 公式ファームウェアの検証済みコミット `7f0b6e1c14431708cfde75ae1ba13df59e868041` を取得します。初回ビルドで公式のツールチェーンがダウンロードされます。
 
@@ -28,11 +62,11 @@ cd flipperzero-firmware
 ./fbt updater_package
 ```
 
-`updater_package` が生成した更新パッケージを、公式の更新手順でFlipperに適用します。初回はUSB単体で試せます。FlipperをSwitchドックのUSB-Aポートにつなぎ、`Switch Controller` → `USB gamepad` → OK。Switchで「設定 → コントローラーとセンサー → Proコントローラーの有線通信」をオンにして、FlipperのOKを押してA入力を確認します。BACK長押しで終了します。
+リポジトリのルートで `python3 scripts/package_update.py flipperzero-firmware/dist --output flipper-switch-update.tgz` を実行すると、同じ形式のインストール用ファイルを作れます。
 
 BLE単体を試すときは `BLE receiver`、両方を接続するときは `BLE -> USB` を選びます。BLE接続状態と受信件数がFlipperに表示されます。なおFlipperのUSB端子をSwitchに使っている間、PCへのUSBデバッグ接続はできません。
 
-## PC側
+## PC側のAPI
 
 WindowsのBluetoothが利用できる環境で実行します。
 

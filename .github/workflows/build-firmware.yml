@@ -1,0 +1,38 @@
+name: Build Flipper firmware
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out bridge sources
+        uses: actions/checkout@v4
+
+      - name: Check out verified Flipper firmware revision
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/flipperdevices/flipperzero-firmware.git firmware
+          git -C firmware checkout --detach 7f0b6e1c14431708cfde75ae1ba13df59e868041
+          git -C firmware submodule update --init --recursive --jobs 4
+
+      - name: Add controller application
+        run: python3 scripts/install_into_firmware.py firmware
+
+      - name: Build full update package
+        working-directory: firmware
+        run: FBT_NO_SYNC=1 ./fbt COMPACT=1 DEBUG=0 updater_package
+
+      - name: Create installable archive
+        run: python3 scripts/package_update.py firmware/dist --output "$RUNNER_TEMP/flipper-switch-update.tgz"
+
+      - name: Upload update package
+        uses: actions/upload-artifact@v4
+        with:
+          name: flipper-switch-update
+          path: ${{ runner.temp }}/flipper-switch-update.tgz
+          if-no-files-found: error
