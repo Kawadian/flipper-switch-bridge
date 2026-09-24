@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Check out bridge sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check out verified Flipper firmware revision
         run: |
@@ -33,7 +33,7 @@ jobs:
         run: python3 scripts/package_update.py firmware/dist --output "$RUNNER_TEMP/flipper-switch-update.tgz"
 
       - name: Upload update package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: flipper-switch-update
           path: ${{ runner.temp }}/flipper-switch-update.tgz
