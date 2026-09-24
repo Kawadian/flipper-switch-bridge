@@ -1,0 +1,48 @@
+name: Build Flipper app
+
+on:
+  workflow_dispatch:
+    inputs:
+      firmware_ref:
+        description: Official firmware tag or commit (match the firmware on your Flipper)
+        required: true
+        default: "1.4.3"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out bridge sources
+        uses: actions/checkout@v6
+
+      - name: Check out official Flipper firmware
+        env:
+          FIRMWARE_REF: ${{ inputs.firmware_ref }}
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/flipperdevices/flipperzero-firmware.git firmware
+          git -C firmware checkout --detach "$FIRMWARE_REF"
+          git -C firmware submodule update --init --recursive --jobs 4
+          # The firmware's version script expects `git remote -v` without a filter suffix.
+          git -C firmware config --unset remote.origin.partialclonefilter
+
+      - name: Stage standalone app
+        run: python3 scripts/install_fap.py firmware
+
+      - name: Build and check FAP imports
+        working-directory: firmware
+        run: FBT_NO_SYNC=1 ./fbt fap_switch_controller
+
+      - name: Copy installable app
+        run: cp firmware/build/f7-firmware-D/.extapps/switch_controller.fap "$RUNNER_TEMP/switch_controller.fap"
+
+      - name: Upload app
+        uses: actions/upload-artifact@v6
+        with:
+          name: switch_controller-fap
+          path: ${{ runner.temp }}/switch_controller.fap
+          if-no-files-found: error

@@ -11,13 +11,21 @@ Flipper Zero を、USB接続のNintendo Switch用コントローラーとして�
 | `flipper/switch_usb.*` | FlipperのOKでSwitchのAを押す | BLE側の状態をUSB HIDにする |
 | `flipper/app.c` | 3モードを選択して試す | BLE→USBの接続 |
 
-USBの低レベル関数は外部アプリ（FAP）向けSDKに公開されていないため、Flipper側は**公式ファームウェアに組み込んでビルド**します。PC側は通常のPythonパッケージです。純正ファームウェアへの変更はアプリの追加だけで、既存のUSBモードをアプリ終了時に復元します。
+Flipper側は **`.fap` アプリとして追加できます**。公式ファームウェアのUSB設定切り替えとBluetoothプロファイル／シリアルサービスのAPIを使用し、アプリ終了時に標準の状態へ戻します。PC側は通常のPythonパッケージです。ファームウェア全体を更新する方法も残しています。
 
 ## 導入方法
 
-### 1. Flipper用ファームウェアを入手する
+### 1. Flipper用アプリを入手する（推奨）
 
-[GitHub Actions の「Build Flipper firmware」](https://github.com/Kawadian/flipper-switch-bridge/actions/workflows/build-firmware.yml)を開き、`Run workflow` → `main` → `Run workflow` を選びます。完了した実行を開き、画面下部の `Artifacts` から `flipper-switch-update` をダウンロードします。GitHubからダウンロードしたZIPを**一度解凍**すると `flipper-switch-update.tgz` が入っています。Flipperにインストールするファイルは、この `.tgz` です。
+[GitHub Actions の「Build Flipper app」](https://github.com/Kawadian/flipper-switch-bridge/actions/workflows/build-fap.yml)を開き、`Run workflow` → `main` → `Run workflow` を選びます。`firmware_ref` はFlipperに入っている**公式ファームウェアと同じリリース**を指定します。初期値は `1.4.3` です。完了した実行の `Artifacts` から `switch_controller-fap` をダウンロードし、ZIPを解凍して `switch_controller.fap` を取り出します。
+
+FlipperにmicroSDカードを挿してPCへUSB接続します。[qFlipper](https://docs.flipper.net/zero/qflipper)の `File manager` → `SD Card` で `apps/USB` フォルダを開き、`switch_controller.fap` をアップロードします。フォルダがなければ作成してください。qFlipperから切断すると、Flipperの `Apps` → `USB` → `Switch Controller` から起動できます。**ファームウェアの書き換えは不要**です。
+
+ファームウェアのバージョンが異なってアプリ起動時にAPI互換性のエラーが表示された場合は、Actionsを同じファームウェアのタグ／コミットで再実行し、生成された `.fap` に置き換えてください。カスタムファームウェアのAPI互換性は保証していません。
+
+#### ファームウェア全体を更新する場合（従来の方法）
+
+[GitHub Actions の「Build Flipper firmware」](https://github.com/Kawadian/flipper-switch-bridge/actions/workflows/build-firmware.yml)を開き、`Run workflow` → `main` → `Run workflow` を選びます。完了した実行を開き、画面下部の `Artifacts` から `flipper-switch-update` をダウンロードします。GitHubからダウンロードしたZIPを**一度解凍**すると `flipper-switch-update.tgz` が入っています。Flipperにインストールするファイルは、この `.tgz` です。これは公式ファームウェアをビルドし直して内蔵アプリを追加する方式です。
 
 FlipperをPCへUSB接続し、[qFlipper](https://docs.flipper.net/zero/qflipper)の詳細設定にある `Install from file` で `.tgz` を選びます。現在のファームウェアを書き換えるため、設定を手元にも残したい場合はqFlipperのバックアップ機能で先に保存してください。更新後、Flipperのメニューに `Switch Controller` が現れます。
 
@@ -48,6 +56,25 @@ Flipperで `Switch Controller` → `BLE receiver` を選択すると、Switchな
 PCから操作するときはFlipperで `BLE -> USB` を選び、PCから同じ `flipper-link` コマンドを実行します。BACK長押しでアプリを終了します。実機でのSwitch認識と入力はまだ未検証です。
 
 ## Flipper側をローカルでビルドする
+
+### `.fap` アプリをビルドする
+
+Flipperの公式ファームウェアと一致するタグでビルドします。例えば公式リリース `1.4.3` の場合:
+
+```bash
+git clone --recursive https://github.com/flipperdevices/flipperzero-firmware.git
+cd flipperzero-firmware
+git checkout 1.4.3
+git submodule update --init --recursive
+cd ..
+python3 scripts/install_fap.py ./flipperzero-firmware
+cd flipperzero-firmware
+./fbt fap_switch_controller
+```
+
+出力は `build/f7-firmware-D/.extapps/switch_controller.fap` です。初回ビルドでは公式ツールチェーンをダウンロードします。
+
+### ファームウェア全体をビルドする（従来の方法）
 
 公式ファームウェアの検証済みコミット `7f0b6e1c14431708cfde75ae1ba13df59e868041` を取得します。初回ビルドで公式のツールチェーンがダウンロードされます。
 
@@ -102,7 +129,7 @@ Pythonのパケット符号化・復号、CRC相当のXOR検査、および構�
 python -m unittest discover -s tests -v
 ```
 
-上記コミットの公式ファームウェアに組み込み、コンパイル・リンクまで確認済みです。実機Switchでの認識・A入力はまだ未検証です。USB識別子とHIDレポートは既存のHORI Pokkén Pad互換実装の形式を基にしています。接続環境やSwitch本体の設定によって追加調整が必要になる場合があります。
+公式ファームウェア `1.4.3` と上記コミットの両方で、USBとBluetoothを含む `.fap` のコンパイル・リンク・API参照検査を確認済みです。従来の内蔵アプリとしてのファームウェアビルドも確認済みです。実機FlipperでのBLE受信、実機Switchでの認識・A入力はまだ未検証です。USB識別子とHIDレポートは既存のHORI Pokkén Pad互換実装の形式を基にしています。接続環境やSwitch本体の設定によって追加調整が必要になる場合があります。
 
 ## 参考実装
 

@@ -1,0 +1,10 @@
+App(
+    appid="switch_controller",
+    name="Switch Controller",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="switch_controller_app",
+    stack_size=4 * 1024,
+    requires=["gui", "bt"],
+    fap_category="USB",
+    fap_description="BLE receiver and USB Switch controller",
+)
