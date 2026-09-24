@@ -8,7 +8,7 @@ Flipper Zero を、USB接続のNintendo Switch用コントローラーとして�
 | --- | --- | --- |
 | `pc/flipper_link` | BLEでFlipperに10バイトの状態を送る | 映像・音声判定プログラムから呼ぶ |
 | `flipper/ble_link.*` | BLEで入力を受け、画面に受信数を表示 | USB側に状態を渡す |
-| `flipper/switch_usb.*` | FlipperのOKでSwitchのAを押す | BLE側の状態をUSB HIDにする |
+| `flipper/switch_usb.*` | Flipperの十字キー・OKでSwitchの十字キー・A・L＋Rを試す | BLE側の状態をUSB HIDにする |
 | `flipper/app.c` | 3モードを選択して試す | BLE→USBの接続 |
 
 Flipper側は **`.fap` アプリとして追加できます**。公式ファームウェアのUSB設定切り替えとBluetoothプロファイル／シリアルサービスのAPIを使用し、アプリ終了時に標準の状態へ戻します。PC側は通常のPythonパッケージです。ファームウェア全体を更新する方法も残しています。
@@ -33,7 +33,7 @@ microSDから更新する場合は `.tgz` を解凍し、内部の `f7-update-*`
 
 ### 2. PC側をインストールする
 
-WindowsでBluetoothを使えるPCにリポジトリを取得して、次を実行します。
+PCとFlipperは **Bluetooth Low Energy（BLE）** で接続します。FlipperのUSB-C端子はSwitch用なので、PCとの通信用USBケーブルは不要です。Windows PCのBluetoothをオンにし、Flipperの `Settings` → `Bluetooth` もオンにします。PCにリポジトリを取得して、PowerShellで次を実行します。
 
 ```bash
 git clone https://github.com/Kawadian/flipper-switch-bridge.git
@@ -43,15 +43,19 @@ py -m venv .venv
 .\.venv\Scripts\flipper-link.exe scan
 ```
 
-Flipperで `Switch Controller` → `BLE receiver` を選択すると、SwitchなしでBLE接続を試せます。`scan` で表示されたアドレスを使い、PowerShellで次を実行してFlipper画面の受信数を確認します。
+Flipperで `Apps` → `USB` → `Switch Controller` → `BLE receiver` を選択すると、SwitchなしでBLE接続を試せます。`scan` で表示されたアドレスを使い、PowerShellで次を実行してFlipper画面の受信数を確認します。ペアリングコードがFlipperに表示されたらPC側で承認します。
 
 ```powershell
 .\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" tap A
+.\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" tap LEFT
+.\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" hold R 1.5
 ```
+
+最初の `scan` で1台だけ見つかった場合は `--address` を省略できます。`BLE receiver` で画面の `RX` が増えれば、PC→Flipperの通信はできています。`BLE -> USB` なら、受け取った入力がSwitch向けのUSBコントローラーにも送られます。接続できない場合は `BLE receiver` または `BLE -> USB` が起動中か、両機器のBluetoothがオンかを確認してください。
 
 ### 3. Switchに接続する
 
-まずFlipperの `Switch Controller` → `USB gamepad` を選び、FlipperのUSB-C端子をデータ通信できるケーブルで初代SwitchのドックのUSB-A端子につなぎます。Switchで「設定 → コントローラーとセンサー → Proコントローラーの有線通信」をオンにして、FlipperのOKボタンでA入力を試します。
+まずFlipperの `Switch Controller` → `USB gamepad` を選び、FlipperのUSB-C端子をデータ通信できるケーブルで初代SwitchのドックのUSB-A端子につなぎます。Switchで「設定 → コントローラーとセンサー → Proコントローラーの有線通信」をオンにします。Flipperの十字キーはSwitchの十字キー（同時押しは斜め入力）、OK短押しはA、OK長押し中はL＋Rとして出力します。
 
 PCから操作するときはFlipperで `BLE -> USB` を選び、PCから同じ `flipper-link` コマンドを実行します。BACK長押しでアプリを終了します。実機でのSwitch認識と入力はまだ未検証です。
 
