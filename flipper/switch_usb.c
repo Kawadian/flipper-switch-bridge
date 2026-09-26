@@ -7,8 +7,9 @@
 #include <string.h>
 
 #define SWITCH_EP_IN  0x81
-#define SWITCH_EP_OUT 0x01
-#define SWITCH_EP_SIZE 8
+#define SWITCH_EP_OUT 0x02
+// The Pokken Pad reference uses 64-byte interrupt endpoints on Switch.
+#define SWITCH_EP_SIZE 64
 
 typedef struct {
     struct usb_interface_descriptor interface;
@@ -51,7 +52,7 @@ static const SwitchConfiguration switch_configuration = {
         .bLength = sizeof(struct usb_config_descriptor), .bDescriptorType = USB_DTYPE_CONFIGURATION,
         .wTotalLength = sizeof(SwitchConfiguration), .bNumInterfaces = 1,
         .bConfigurationValue = 1, .bmAttributes = USB_CFG_ATTR_RESERVED,
-        .bMaxPower = USB_CFG_POWER_MA(100),
+        .bMaxPower = USB_CFG_POWER_MA(500),
     },
     .joystick = {
         .interface = {

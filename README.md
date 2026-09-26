@@ -1,6 +1,6 @@
 # Flipper Switch Controller
 
-Flipper Zero を、USB接続のNintendo Switch用コントローラーとして動かし、PCからBLE経由で入力状態を送る試作リポジトリです。対象は初代Nintendo Switchのドック接続です。Switch 2は未検証です。
+Flipper Zero をUSB接続のNintendo Switch用コントローラーとして動かし、PCからBLE経由で入力状態を送る試作リポジトリです。Switch 2用のPro Controller互換USBモードと、従来のPokkén Pad互換モードがあります。Switch 2実機での新モードの動作はまだ確認待ちです。
 
 ## 構成
 
@@ -8,8 +8,9 @@ Flipper Zero を、USB接続のNintendo Switch用コントローラーとして�
 | --- | --- | --- |
 | `pc/flipper_link` | BLEでFlipperに10バイトの状態を送る | 映像・音声判定プログラムから呼ぶ |
 | `flipper/ble_link.*` | BLEで入力を受け、画面に受信数を表示 | USB側に状態を渡す |
-| `flipper/switch_usb.*` | Flipperの十字キー・OKでSwitchの十字キー・A・L＋Rを試す | BLE側の状態をUSB HIDにする |
-| `flipper/app.c` | 3モードを選択して試す | BLE→USBの接続 |
+| `flipper/pro_usb.*` | Pro ControllerのUSB認識手順と入力を試す | BLE側の状態をPro形式のUSB HIDにする |
+| `flipper/switch_usb.*` | 旧Pokkén Pad形式のUSB入力を試す | 単独で利用できる旧形式のUSB HID |
+| `flipper/app.c` | 4モードを選択して試す | BLE→USBの接続 |
 
 Flipper側は **`.fap` アプリとして追加できます**。公式ファームウェアのUSB設定切り替えとBluetoothプロファイル／シリアルサービスのAPIを使用し、アプリ終了時に標準の状態へ戻します。PC側は通常のPythonパッケージです。ファームウェア全体を更新する方法も残しています。
 
@@ -55,9 +56,11 @@ Flipperで `Apps` → `USB` → `Switch Controller` → `BLE receiver` を選択
 
 ### 3. Switchに接続する
 
-まずFlipperの `Switch Controller` → `USB gamepad` を選び、FlipperのUSB-C端子をデータ通信できるケーブルで初代SwitchのドックのUSB-A端子につなぎます。Switchで「設定 → コントローラーとセンサー → Proコントローラーの有線通信」をオンにします。Flipperの十字キーはSwitchの十字キー（同時押しは斜め入力）、OK短押しはA、OK長押し中はL＋Rとして出力します。
+Switch 2では、本体の「設定 → コントローラーと周辺機器 → Proコントローラーの有線通信」をオンにし、Flipperの `Switch Controller` → `USB Pro (Switch 2)` を選びます。FlipperのUSB-C端子をデータ通信できるケーブルでドックのUSB-A端子につなぎ、「持ちかた/順番を変える」画面でOKを短押ししてみてください。Flipperの十字キーはSwitchの十字キー（同時押しは斜め入力）、OK短押しはA、OK長押し中はL＋Rとして出力します。`BLE -> USB Pro` でもUSB側は同じPro形式です。初代Switchで従来形式を試す場合は `USB Pokken (legacy)` を使います。
 
-PCから操作するときはFlipperで `BLE -> USB` を選び、PCから同じ `flipper-link` コマンドを実行します。BACK長押しでアプリを終了します。実機でのSwitch認識と入力はまだ未検証です。
+画面の `USB: configured` はSwitchがUSB設定を選択したことだけを表し、コントローラー登録を意味しません。`USB: Pro handshake` はPro形式のUSB応答手順が進んだことを表します。この表示でもアイコンが出ない場合は、Proとしての登録は確認できていません。画面表示と本体の挙動をissueで知らせてください。
+
+PCから操作するときはFlipperで `BLE -> USB Pro` を選び、PCから同じ `flipper-link` コマンドを実行します。BACK長押しでアプリを終了します。新USBモードのSwitch 2実機での認識と入力はまだ未検証です。
 
 ## Flipper側をローカルでビルドする
 
@@ -133,12 +136,13 @@ Pythonのパケット符号化・復号、CRC相当のXOR検査、および構�
 python -m unittest discover -s tests -v
 ```
 
-公式ファームウェア `1.4.3` と上記コミットの両方で、USBとBluetoothを含む `.fap` のコンパイル・リンク・API参照検査を確認済みです。従来の内蔵アプリとしてのファームウェアビルドも確認済みです。実機FlipperでのBLE受信、実機Switchでの認識・A入力はまだ未検証です。USB識別子とHIDレポートは既存のHORI Pokkén Pad互換実装の形式を基にしています。接続環境やSwitch本体の設定によって追加調整が必要になる場合があります。
+公式ファームウェア `1.4.3` で、新しいPro USBモードを含む `.fap` のコンパイル・リンク・API参照検査を確認済みです。Switch 2実機での認識・入力はまだ未検証です。USBの識別子、HID記述子、初期化・サブコマンドへの応答はGP2040-CEのSwitch Pro実装に基づきます。ただしFlipperの標準USB HALは制御エンドポイント0のサイズが8バイトで、参照実装の64バイトとは異なります。Switch 2がこの差を許容するか、実機確認が必要です。旧Pokkénモードの割り込みエンドポイントは参照実装どおり64バイトに修正しました。
 
 ## 参考実装
 
 - [Flipper公式ファームウェア](https://github.com/flipperdevices/flipperzero-firmware)
 - [Switch-Fightstick: Pokkén Pad互換USB記述子](https://github.com/shinyquagsire23/Switch-Fightstick)
+- [GP2040-CE: Switch Pro USB実装（MIT）](https://github.com/OpenStickCommunity/GP2040-CE/tree/main/src/drivers/switchpro)
 - [Bleak: PC側BLEクライアント](https://bleak.readthedocs.io/en/latest/api/client.html)
 
 このリポジトリのコードはGPL-3.0で公開します。Flipper公式ファームウェアのライセンス表記も維持してください。

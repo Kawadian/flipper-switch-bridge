@@ -1,5 +1,6 @@
 #include "ble_link.h"
 #include "controller_state.h"
+#include "pro_usb.h"
 #include "switch_usb.h"
 
 #include <furi.h>
@@ -12,7 +13,7 @@
 #define INPUT_TIMEOUT_MS 500
 #define OK_TAP_MS 100
 
-typedef enum { ModeUsb, ModeBle, ModeBridge } AppMode;
+typedef enum { ModeUsbPro, ModeUsbPokken, ModeBle, ModeBridge } AppMode;
 enum { DirectionUp = 1, DirectionDown = 2, DirectionLeft = 4, DirectionRight = 8 };
 
 typedef struct {
@@ -38,16 +39,20 @@ static void draw(Canvas* canvas, void* context) {
     canvas_draw_str(canvas, 2, 12, "Switch Controller");
     canvas_set_font(canvas, FontSecondary);
     if(!app->active) {
-        const char* labels[] = {"USB gamepad", "BLE receiver", "BLE -> USB"};
+        const char* labels[] = {"USB Pro (Switch 2)", "USB Pokken (legacy)",
+                                "BLE receiver", "BLE -> USB Pro"};
         canvas_draw_str(canvas, 2, 29, labels[app->mode]);
         canvas_draw_str(canvas, 2, 46, "UP/DOWN mode   OK start");
     } else {
-        canvas_draw_str(canvas, 2, 28, app->usb_ready ?
-            (switch_usb_connected() ? "USB: connected" : "USB: waiting") : "USB: off");
+        bool pro = app->mode != ModeUsbPokken;
+        canvas_draw_str(canvas, 2, 28, !app->usb_ready ? "USB: off" :
+            pro ? (pro_usb_ready() ? "USB: Pro handshake" :
+                   pro_usb_connected() ? "USB: configured" : "USB: waiting") :
+                  (switch_usb_connected() ? "USB: configured" : "USB: waiting"));
         canvas_draw_str(canvas, 2, 40, app->ble ?
             (ble_link_connected(app->ble) ? "BLE: connected" : "BLE: waiting") : "BLE: off");
         char counter[32];
-        if(app->mode == ModeUsb)
+        if(app->mode == ModeUsbPro || app->mode == ModeUsbPokken)
             snprintf(counter, sizeof(counter), "D-pad: move  OK: A/LR");
         else
             snprintf(counter, sizeof(counter), "RX: %lu  SEQ: %u", (unsigned long)app->received,
@@ -77,7 +82,8 @@ static void send_state(App* app) {
     state.buttons |= app->local_buttons;
     uint8_t hat = local_hat(app->local_directions);
     if(hat != 8) state.hat = hat;
-    switch_usb_send(&state);
+    if(app->mode == ModeUsbPokken) switch_usb_send(&state);
+    else pro_usb_send(&state);
 }
 
 static void handle_local_input(App* app, InputEvent event) {
@@ -111,14 +117,14 @@ static void handle_local_input(App* app, InputEvent event) {
 
 static bool start_mode(App* app, FuriMessageQueue* packets) {
     if(app->mode != ModeBle) {
-        app->usb_ready = switch_usb_start();
+        app->usb_ready = app->mode == ModeUsbPokken ? switch_usb_start() : pro_usb_start();
         if(!app->usb_ready) return false;
         send_state(app);
     }
-    if(app->mode != ModeUsb) {
+    if(app->mode == ModeBle || app->mode == ModeBridge) {
         app->ble = ble_link_start(packets);
         if(!app->ble) {
-            if(app->usb_ready) switch_usb_stop();
+            if(app->usb_ready) pro_usb_stop();
             app->usb_ready = false;
             return false;
         }
@@ -134,7 +140,8 @@ static void stop_mode(App* app) {
         app->ble = NULL;
     }
     if(app->usb_ready) {
-        switch_usb_stop();
+        if(app->mode == ModeUsbPokken) switch_usb_stop();
+        else pro_usb_stop();
         app->usb_ready = false;
     }
     app->active = false;
@@ -142,7 +149,7 @@ static void stop_mode(App* app) {
 
 int32_t switch_controller_app(void* args) {
     UNUSED(args);
-    App app = {.mode = ModeUsb, .state = controller_state_neutral()};
+    App app = {.mode = ModeUsbPro, .state = controller_state_neutral()};
     FuriMessageQueue* events = furi_message_queue_alloc(16, sizeof(InputEvent));
     FuriMessageQueue* packets = furi_message_queue_alloc(16, CONTROLLER_PACKET_SIZE);
     Gui* gui = furi_record_open(RECORD_GUI);
@@ -154,12 +161,12 @@ int32_t switch_controller_app(void* args) {
     bool running = true;
     while(running) {
         InputEvent event;
-        if(furi_message_queue_get(events, &event, 20) == FuriStatusOk) {
+        if(furi_message_queue_get(events, &event, 5) == FuriStatusOk) {
             if(!app.active) {
                 if(event.type == InputTypePress && event.key == InputKeyUp)
-                    app.mode = (app.mode + 2) % 3;
+                    app.mode = (app.mode + 3) % 4;
                 if(event.type == InputTypePress && event.key == InputKeyDown)
-                    app.mode = (app.mode + 1) % 3;
+                    app.mode = (app.mode + 1) % 4;
                 if(event.type == InputTypePress && event.key == InputKeyOk)
                     start_mode(&app, packets);
                 if(event.type == InputTypePress && event.key == InputKeyBack) running = false;
@@ -199,7 +206,8 @@ int32_t switch_controller_app(void* args) {
             send_state(&app);
         }
         if(app.usb_ready &&
-           furi_get_tick() - app.last_usb_tick >= furi_ms_to_ticks(50)) {
+           furi_get_tick() - app.last_usb_tick >=
+               furi_ms_to_ticks(app.mode == ModeUsbPokken ? 50 : 5)) {
             send_state(&app);
             app.last_usb_tick = furi_get_tick();
         }
