@@ -30,6 +30,8 @@ typedef struct {
     uint32_t last_packet_tick;
     uint32_t received;
     uint32_t last_usb_tick;
+    uint32_t last_draw_tick;
+    bool closing;
 } App;
 
 static void draw(Canvas* canvas, void* context) {
@@ -38,7 +40,9 @@ static void draw(Canvas* canvas, void* context) {
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 2, 12, "Switch Controller");
     canvas_set_font(canvas, FontSecondary);
-    if(!app->active) {
+    if(app->closing) {
+        canvas_draw_str(canvas, 2, 34, "Disconnecting USB...");
+    } else if(!app->active) {
         const char* labels[] = {"USB Pro (Switch 2)", "USB Pokken (legacy)",
                                 "BLE receiver", "BLE -> USB Pro"};
         canvas_draw_str(canvas, 2, 29, labels[app->mode]);
@@ -170,8 +174,12 @@ int32_t switch_controller_app(void* args) {
                 if(event.type == InputTypePress && event.key == InputKeyOk)
                     start_mode(&app, packets);
                 if(event.type == InputTypePress && event.key == InputKeyBack) running = false;
-            } else if(event.key == InputKeyBack && event.type == InputTypeLong) {
+            } else if(event.key == InputKeyBack &&
+                      (event.type == InputTypePress || event.type == InputTypeLong)) {
                 running = false;
+                app.closing = true;
+                view_port_update(view);
+                break;
             } else if(app.usb_ready) handle_local_input(&app, event);
         }
         uint8_t packet[CONTROLLER_PACKET_SIZE];
@@ -211,8 +219,12 @@ int32_t switch_controller_app(void* args) {
             send_state(&app);
             app.last_usb_tick = furi_get_tick();
         }
-        view_port_update(view);
+        if(furi_get_tick() - app.last_draw_tick >= furi_ms_to_ticks(100)) {
+            view_port_update(view);
+            app.last_draw_tick = furi_get_tick();
+        }
     }
+    if(app.closing) furi_delay_ms(20);
     stop_mode(&app);
     gui_remove_view_port(gui, view);
     view_port_free(view);
