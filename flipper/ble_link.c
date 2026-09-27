@@ -5,7 +5,9 @@
 #include <furi_ble/profile_interface.h>
 #include <profiles/serial_profile.h>
 #include <services/serial_service.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct {
     FuriHalBleProfileBase base;
@@ -50,6 +52,16 @@ static void profile_stop(FuriHalBleProfileBase* base) {
 
 static void profile_config(GapConfig* config, FuriHalBleProfileParams params) {
     ble_profile_serial->get_gap_config(config, params);
+    // The default profile has a different GATT database. Give this app its
+    // own BLE identity so Windows does not reuse cached characteristic handles.
+    // The official HID profile uses the adjacent address (+1).
+    config->mac_address[2] += 2;
+    char original_name[sizeof(config->adv_name)];
+    memcpy(original_name, config->adv_name, sizeof(original_name));
+    if(strncmp(original_name, "Flipper", 7) == 0)
+        snprintf(config->adv_name, sizeof(config->adv_name), "SwitchLink%s", original_name + 7);
+    else
+        snprintf(config->adv_name, sizeof(config->adv_name), "SwitchLink");
 }
 
 static uint16_t receive(SerialServiceEvent event, void* context) {

@@ -10,19 +10,19 @@ from .protocol import ControllerState, encode
 
 SERIAL_SERVICE_UUID = "8fe5b3d5-2e7f-4a98-2a48-7acc60fe0000"
 SERIAL_RX_UUID = "19ed82ae-ed21-4c9d-4145-228e62fe0000"
+DEVICE_PREFIX = "switchlink"
 
 
 async def find_flipper(address: str | None = None, timeout: float = 8.0):
     devices = await BleakScanner.discover(timeout=timeout)
-    if address:
-        matches = [device for device in devices if device.address.lower() == address.lower()]
-    else:
-        matches = [device for device in devices if device.name and
-                   device.name.lower().startswith("flipper")]
+    matches = [device for device in devices if device.name and
+               device.name.lower().startswith(DEVICE_PREFIX) and
+               (address is None or device.address.lower() == address.lower())]
     if len(matches) != 1:
         raise RuntimeError(
-            f"Found {len(matches)} matching Flippers. "
-            "Launch BLE receiver/bridge on the device and pass --address if needed.")
+            f"Found {len(matches)} SwitchLink devices. "
+            "Start BLE receiver or BLE -> USB Pro, then run scan; "
+            "the regular Flipper Bluetooth entry is a different profile.")
     return matches[0]
 
 

@@ -1,6 +1,6 @@
 # Flipper Switch Controller
 
-Flipper Zero をUSB接続のNintendo Switch用コントローラーとして動かし、PCからBLE経由で入力状態を送る試作リポジトリです。Switch 2用のPro Controller互換USBモードと、従来のPokkén Pad互換モードがあります。Switch 2実機での新モードの動作はまだ確認待ちです。
+Flipper Zero をUSB接続のNintendo Switch用コントローラーとして動かし、PCからBLE経由で入力状態を送る試作リポジトリです。Switch 2用のPro Controller互換USBモードと、従来のPokkén Pad互換モードがあります。Switch 2実機でPro USB入力が反映されることを確認しました。BLE通信の実機確認は進行中です。
 
 ## 構成
 
@@ -37,23 +37,26 @@ microSDから更新する場合は `.tgz` を解凍し、内部の `f7-update-*`
 
 PCとFlipperは **Bluetooth Low Energy（BLE）** で接続します。FlipperのUSB-C端子はSwitch用なので、PCとの通信用USBケーブルは不要です。Windows PCのBluetoothをオンにし、Flipperの `Settings` → `Bluetooth` もオンにします。PCにリポジトリを取得して、PowerShellで次を実行します。
 
+**WindowsのBluetooth設定で通常の `Flipper ...` を接続しただけでは、入力は送れません。** アプリ起動中に別のBLE機器名 `SwitchLink ...` が現れ、`flipper-link` コマンドが接続と送信を担当します。Windows設定画面でペアリング済みの機器が一時的に「接続済み」となってすぐ切れても、それだけでは通信エラーとは判断できません。通常の `Flipper ...` のペアリングは残して構いません。
+
 ```bash
 git clone https://github.com/Kawadian/flipper-switch-bridge.git
 cd flipper-switch-bridge
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
-.\.venv\Scripts\flipper-link.exe scan
 ```
 
-Flipperで `Apps` → `USB` → `Switch Controller` → `BLE receiver` を選択すると、SwitchなしでBLE接続を試せます。`scan` で表示されたアドレスを使い、PowerShellで次を実行してFlipper画面の受信数を確認します。ペアリングコードがFlipperに表示されたらPC側で承認します。
+Flipperで `Apps` → `USB` → `Switch Controller` → `BLE receiver` を選択すると、SwitchなしでBLE接続を試せます。**この版の `.fap` に更新してから** `scan` を再実行し、表示された `SwitchLink ...` のアドレスを使います。最初に `probe` で10秒間接続し、Flipper画面の `BLE: connected` と `RX` の増加を確認します。ペアリングコードがFlipperに表示されたらPC側で承認します。
 
 ```powershell
+.\.venv\Scripts\flipper-link.exe scan
+.\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" probe 10
 .\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" tap A
 .\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" tap LEFT
 .\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" hold R 1.5
 ```
 
-最初の `scan` で1台だけ見つかった場合は `--address` を省略できます。`BLE receiver` で画面の `RX` が増えれば、PC→Flipperの通信はできています。`BLE -> USB` なら、受け取った入力がSwitch向けのUSBコントローラーにも送られます。接続できない場合は `BLE receiver` または `BLE -> USB` が起動中か、両機器のBluetoothがオンかを確認してください。
+`scan` で1台だけ見つかった場合は `--address` を省略できます。`probe` 中は接続を保ち、正常終了すると切断します。`tap` と `hold` もコマンド終了後に切断する仕様です。`BLE receiver` で画面の `RX` が増えれば、PC→Flipperの通信はできています。`BLE -> USB Pro` なら、受け取った入力がSwitch向けのUSBコントローラーにも送られます。`SwitchLink ...` が見つからない場合は、新しい `.fap`、モード起動、両機器のBluetooth設定を確認してください。
 
 ### 3. Switchに接続する
 
@@ -61,7 +64,7 @@ Switch 2では、本体の「設定 → コントローラーと周辺機器 →
 
 画面の `USB: configured` はSwitchがUSB設定を選択したことだけを表し、コントローラー登録を意味しません。`USB: Pro handshake` はPro形式のUSB応答手順が進んだことを表します。`RX 01:01 pair:02` のような表示は最後に受信したUSBレポート・コマンドとペアリングの進行段階です。エラーが続く場合は再接続を繰り返さず、USBケーブルを外した後の表示をissueで知らせてください。
 
-PCから操作するときはFlipperで `BLE -> USB Pro` を選び、PCから同じ `flipper-link` コマンドを実行します。動作中にBACKを押すとUSB接続を解除してアプリを終了します。新USBモードのSwitch 2実機での認識と入力はまだ未検証です。
+PCから操作するときはFlipperで `BLE -> USB Pro` を選び、PCから同じ `flipper-link` コマンドを実行します。動作中にBACKを押すとUSB接続を解除してアプリを終了します。Pro USBモードのSwitch 2実機での入力は確認済みです。BLE経由での入力は実機確認待ちです。
 
 ## Flipper側をローカルでビルドする
 
@@ -109,6 +112,7 @@ WindowsのBluetoothが利用できる環境で実行します。
 python -m venv .venv
 python -m pip install -e .
 flipper-link scan
+flipper-link --address <表示されたアドレス> probe 10
 flipper-link --address <表示されたアドレス> tap A
 flipper-link --address <表示されたアドレス> hold LEFT 1.5
 ```
@@ -139,7 +143,7 @@ cc -std=c11 -Wall -Wextra -Werror tests/pro_protocol_test.c flipper/pro_protocol
 /tmp/pro_protocol_test
 ```
 
-旧版のPro USBモードをSwitch 2に接続すると、ユーザーの実機で2162-0002のエラーが発生しました。有線接続中のBluetoothペアリングコマンドへ内容のない応答を返すと同じエラーを起こすという互換実装の記録を基に、MAC・キー・保存通知の応答を追加しました。USB切替コマンドへの不要な応答と、接続直後の一方的な識別応答も止めています。修正版の実機での認識・入力・エラー解消は確認待ちです。
+旧版のPro USBモードをSwitch 2に接続すると、ユーザーの実機で2162-0002のエラーが発生しました。有線接続中のBluetoothペアリングコマンドへ内容のない応答を返すと同じエラーを起こすという互換実装の記録を基に、MAC・キー・保存通知の応答を追加しました。USB切替コマンドへの不要な応答と、接続直後の一方的な識別応答も止めています。修正版でSwitch 2実機への入力が反映されることを確認しました。
 
 Flipperの標準USB HALは制御エンドポイント0を8バイトで初期化しますが、Proモードの間だけ参照実装と同じ64バイトに設定し、アプリ終了時に戻します。旧Pokkénモードの割り込みエンドポイントは参照実装どおり64バイトです。
 
