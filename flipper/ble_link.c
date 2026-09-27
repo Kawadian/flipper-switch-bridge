@@ -59,7 +59,7 @@ static void profile_config(GapConfig* config, FuriHalBleProfileParams params) {
     char original_name[sizeof(config->adv_name)];
     memcpy(original_name, config->adv_name, sizeof(original_name));
     if(strncmp(original_name, "Flipper", 7) == 0)
-        snprintf(config->adv_name, sizeof(config->adv_name), "SwitchLink%s", original_name + 7);
+        snprintf(config->adv_name, sizeof(config->adv_name), "SwitchLink%.6s", original_name + 7);
     else
         snprintf(config->adv_name, sizeof(config->adv_name), "SwitchLink");
 }
