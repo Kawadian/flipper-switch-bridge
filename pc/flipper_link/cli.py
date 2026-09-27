@@ -1,4 +1,4 @@
-"""Examples: flipper-link scan | flipper-link tap A | flipper-link hold A 1.5."""
+"""Examples: flipper-link scan | flipper-link tap A | flipper-link play."""
 
 import argparse
 import asyncio
@@ -21,7 +21,15 @@ def main() -> None:
         subparser.add_argument("control", help="A, B, X, Y, HOME, UP, LEFT, ...")
         if command == "hold":
             subparser.add_argument("seconds", type=float)
+    commands.add_parser(
+        "play",
+        help="Open a window and forward keyboard input while it is focused",
+    )
     args = parser.parse_args()
+    if args.command == "play":
+        from .gui import run_keyboard_gui
+        run_keyboard_gui(args.address)
+        return
     asyncio.run(_run(args))
 
 
