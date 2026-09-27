@@ -56,6 +56,10 @@ static void profile_config(GapConfig* config, FuriHalBleProfileParams params) {
     // own BLE identity so Windows does not reuse cached characteristic handles.
     // The official HID profile uses the adjacent address (+1).
     config->mac_address[2] += 2;
+    // DisplayOnly passkey entry reaches Windows and then returns Failed.
+    // Numeric comparison is accepted immediately on the PC; Flipper shows
+    // the same code and waits for OK.
+    config->pairing_method = GapPairingPinCodeVerifyYesNo;
     // Byte 0 is AD_TYPE_COMPLETE_LOCAL_NAME. gap.c skips it for the GATT device
     // name and sends the whole buffer as the advertising local name. Replacing
     // that byte removes the name from scans and shifts the visible text.

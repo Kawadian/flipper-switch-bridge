@@ -1,7 +1,6 @@
 """BLE client for the Flipper serial GATT RX characteristic."""
 
 import asyncio
-import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -27,24 +26,15 @@ async def find_flipper(address: str | None = None, timeout: float = 8.0):
     return matches[0]
 
 
-def pairing_pin(text: str) -> str:
-    """The Flipper screen prints the code as six digits."""
-    pin = text.strip()
-    if len(pin) != 6 or not pin.isdigit():
-        raise ValueError("pairing code must be 6 digits")
-    return pin
-
-
 def _address_int(address: str) -> int:
     return int(address.replace(":", "").replace("-", ""), 16)
 
 
 async def ensure_paired(address: str) -> None:
-    """Pair with the PIN shown on Flipper. Serial RX requires authenticated writes."""
+    """Pair with numeric comparison. Serial RX requires an authenticated link."""
     from winrt.windows.devices.bluetooth import BluetoothLEDevice
     from winrt.windows.devices.enumeration import (
         DevicePairingKinds,
-        DevicePairingProtectionLevel,
         DevicePairingResultStatus,
     )
 
@@ -56,31 +46,15 @@ async def ensure_paired(address: str) -> None:
         return
 
     def on_requested(_sender, args) -> None:
-        deferral = args.get_deferral()
-
-        def submit_pin() -> None:
-            try:
-                if args.pairing_kind != DevicePairingKinds.PROVIDE_PIN:
-                    print(f"Unexpected pairing request: {args.pairing_kind}")
-                    return
-                print("Flipper is showing Pairing code. Type those 6 digits here.")
-                try:
-                    pin = pairing_pin(input("Pairing code: "))
-                except ValueError as error:
-                    print(error)
-                    return
-                args.accept_with_pin(pin)
-            finally:
-                deferral.complete()
-
-        threading.Thread(target=submit_pin, daemon=True).start()
+        if args.pairing_kind != DevicePairingKinds.CONFIRM_PIN_MATCH:
+            print(f"Unexpected pairing request: {args.pairing_kind}", flush=True)
+            return
+        print(f"Flipper is showing {args.pin}. Press OK on Flipper.", flush=True)
+        args.accept()
 
     token = pairing.custom.add_pairing_requested(on_requested)
     try:
-        result = await pairing.custom.pair_with_protection_level_async(
-            DevicePairingKinds.PROVIDE_PIN,
-            DevicePairingProtectionLevel.ENCRYPTION_AND_AUTHENTICATION,
-        )
+        result = await pairing.custom.pair_async(DevicePairingKinds.CONFIRM_PIN_MATCH)
     finally:
         pairing.custom.remove_pairing_requested(token)
     if result.status not in (
@@ -89,7 +63,7 @@ async def ensure_paired(address: str) -> None:
     ):
         raise RuntimeError(
             f"Pairing failed: {result.status.name}. "
-            "Type the 6-digit code shown on Flipper at the prompt.")
+            "Press OK on Flipper when it shows Verify code.")
 
 
 class ControllerLink:
