@@ -1,6 +1,12 @@
 name: Build Flipper app
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "flipper/**"
+      - "scripts/install_fap.py"
+      - ".github/workflows/build-fap.yml"
   workflow_dispatch:
     inputs:
       firmware_ref:
@@ -22,7 +28,7 @@ jobs:
 
       - name: Check out official Flipper firmware
         env:
-          FIRMWARE_REF: ${{ inputs.firmware_ref }}
+          FIRMWARE_REF: ${{ inputs.firmware_ref || '1.4.3' }}
         run: |
           git clone --filter=blob:none --no-checkout https://github.com/flipperdevices/flipperzero-firmware.git firmware
           git -C firmware checkout --detach "$FIRMWARE_REF"

@@ -53,8 +53,12 @@ static void draw(Canvas* canvas, void* context) {
             pro ? (pro_usb_ready() ? "USB: Pro handshake" :
                    pro_usb_connected() ? "USB: configured" : "USB: waiting") :
                   (switch_usb_connected() ? "USB: configured" : "USB: waiting"));
+        char usb_diag[32];
+        snprintf(usb_diag, sizeof(usb_diag), "RX %02X:%02X pair:%02X",
+                 pro_usb_last_report_id(), pro_usb_last_command(), pro_usb_last_pairing_step());
         canvas_draw_str(canvas, 2, 40, app->ble ?
-            (ble_link_connected(app->ble) ? "BLE: connected" : "BLE: waiting") : "BLE: off");
+            (ble_link_connected(app->ble) ? "BLE: connected" : "BLE: waiting") :
+            pro ? usb_diag : "BLE: off");
         char counter[32];
         if(app->mode == ModeUsbPro || app->mode == ModeUsbPokken)
             snprintf(counter, sizeof(counter), "D-pad: move  OK: A/LR");

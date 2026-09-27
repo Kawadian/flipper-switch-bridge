@@ -8,6 +8,7 @@ Flipper Zero をUSB接続のNintendo Switch用コントローラーとして動�
 | --- | --- | --- |
 | `pc/flipper_link` | BLEでFlipperに10バイトの状態を送る | 映像・音声判定プログラムから呼ぶ |
 | `flipper/ble_link.*` | BLEで入力を受け、画面に受信数を表示 | USB側に状態を渡す |
+| `flipper/pro_protocol.*` | Pro ControllerのUSB初期化・ペアリング応答を単体で検証する | USBデバイス側の応答データを作る |
 | `flipper/pro_usb.*` | Pro ControllerのUSB認識手順と入力を試す | BLE側の状態をPro形式のUSB HIDにする |
 | `flipper/switch_usb.*` | 旧Pokkén Pad形式のUSB入力を試す | 単独で利用できる旧形式のUSB HID |
 | `flipper/app.c` | 4モードを選択して試す | BLE→USBの接続 |
@@ -58,7 +59,7 @@ Flipperで `Apps` → `USB` → `Switch Controller` → `BLE receiver` を選択
 
 Switch 2では、本体の「設定 → コントローラーと周辺機器 → Proコントローラーの有線通信」をオンにし、Flipperの `Switch Controller` → `USB Pro (Switch 2)` を選びます。FlipperのUSB-C端子をデータ通信できるケーブルでドックのUSB-A端子につなぎ、「持ちかた/順番を変える」画面でOKを短押ししてみてください。Flipperの十字キーはSwitchの十字キー（同時押しは斜め入力）、OK短押しはA、OK長押し中はL＋Rとして出力します。`BLE -> USB Pro` でもUSB側は同じPro形式です。初代Switchで従来形式を試す場合は `USB Pokken (legacy)` を使います。
 
-画面の `USB: configured` はSwitchがUSB設定を選択したことだけを表し、コントローラー登録を意味しません。`USB: Pro handshake` はPro形式のUSB応答手順が進んだことを表します。この表示でもアイコンが出ない場合は、Proとしての登録は確認できていません。画面表示と本体の挙動をissueで知らせてください。
+画面の `USB: configured` はSwitchがUSB設定を選択したことだけを表し、コントローラー登録を意味しません。`USB: Pro handshake` はPro形式のUSB応答手順が進んだことを表します。`RX 01:01 pair:02` のような表示は最後に受信したUSBレポート・コマンドとペアリングの進行段階です。エラーが続く場合は再接続を繰り返さず、USBケーブルを外した後の表示をissueで知らせてください。
 
 PCから操作するときはFlipperで `BLE -> USB Pro` を選び、PCから同じ `flipper-link` コマンドを実行します。動作中にBACKを押すとUSB接続を解除してアプリを終了します。新USBモードのSwitch 2実機での認識と入力はまだ未検証です。
 
@@ -134,15 +135,20 @@ Pythonのパケット符号化・復号、CRC相当のXOR検査、および構�
 
 ```bash
 python -m unittest discover -s tests -v
+cc -std=c11 -Wall -Wextra -Werror tests/pro_protocol_test.c flipper/pro_protocol.c -o /tmp/pro_protocol_test
+/tmp/pro_protocol_test
 ```
 
-公式ファームウェア `1.4.3` で `.fap` のコンパイル・リンク・API参照検査を確認済みです。旧版のPro USBモードをSwitch 2に接続すると、ユーザーの実機で2162-0002のエラーが発生しました。修正版の実機での認識・入力・エラー解消は確認待ちです。USBの識別子、HID記述子、初期化・サブコマンドへの応答はGP2040-CEのSwitch Pro実装に基づきます。Flipperの標準USB HALは制御エンドポイント0を8バイトで初期化しますが、Proモードの間だけ参照実装と同じ64バイトに設定し、アプリ終了時に戻します。ホスト応答を順番に送るためのキューを追加し、未対応のGET_REPORT要求には異なる種類のレポートを返さないようにしました。旧Pokkénモードの割り込みエンドポイントは参照実装どおり64バイトです。
+旧版のPro USBモードをSwitch 2に接続すると、ユーザーの実機で2162-0002のエラーが発生しました。有線接続中のBluetoothペアリングコマンドへ内容のない応答を返すと同じエラーを起こすという互換実装の記録を基に、MAC・キー・保存通知の応答を追加しました。USB切替コマンドへの不要な応答と、接続直後の一方的な識別応答も止めています。修正版の実機での認識・入力・エラー解消は確認待ちです。
+
+Flipperの標準USB HALは制御エンドポイント0を8バイトで初期化しますが、Proモードの間だけ参照実装と同じ64バイトに設定し、アプリ終了時に戻します。旧Pokkénモードの割り込みエンドポイントは参照実装どおり64バイトです。
 
 ## 参考実装
 
 - [Flipper公式ファームウェア](https://github.com/flipperdevices/flipperzero-firmware)
 - [Switch-Fightstick: Pokkén Pad互換USB記述子](https://github.com/shinyquagsire23/Switch-Fightstick)
 - [GP2040-CE: Switch Pro USB実装（MIT）](https://github.com/OpenStickCommunity/GP2040-CE/tree/main/src/drivers/switchpro)
+- [Karakuri firmware: Switch 2有線Pro応答の調査・実装](https://github.com/eggletric/karakuri-firmware/blob/main/firmware/pico_switch_pad/procon_usb.h)
 - [Bleak: PC側BLEクライアント](https://bleak.readthedocs.io/en/latest/api/client.html)
 
 このリポジトリのコードはGPL-3.0で公開します。Flipper公式ファームウェアのライセンス表記も維持してください。

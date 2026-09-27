@@ -1,5 +1,6 @@
 #include "pro_usb.h"
 #include "pro_data.h"
+#include "pro_protocol.h"
 
 #include <furi.h>
 #include <furi_hal_usb.h>
@@ -80,6 +81,9 @@ static uint8_t input[PRO_PACKET];
 static uint8_t device_info[12] = {
     0x04, 0x91, 0x03, 0x02, 0x7C, 0xBB, 0x8A, 0x12, 0x34, 0x56, 0x01, 0x02};
 static uint8_t counter;
+static volatile uint8_t last_report_id;
+static volatile uint8_t last_command;
+static volatile uint8_t last_pairing_step;
 
 static bool queue_reply(const uint8_t* report) {
     uint8_t next = (reply_write + 1) % PRO_REPLY_SLOTS;
@@ -87,16 +91,6 @@ static bool queue_reply(const uint8_t* report) {
     memcpy(replies[reply_write], report, PRO_PACKET);
     reply_write = next;
     return true;
-}
-
-static void identify(void) {
-    uint8_t report[PRO_PACKET] = {0};
-    report[0] = 0x81;
-    report[1] = 0x01;
-    report[3] = 0x03;
-    // The USB identification response uses the MAC in reverse order.
-    for(size_t i = 0; i < 6; i++) report[4 + i] = device_info[9 - i];
-    queue_reply(report);
 }
 
 static void pack_stick(uint8_t* bytes, uint8_t x, uint8_t y) {
@@ -136,58 +130,14 @@ static void set_input(const ControllerState* state) {
     input[12] = 0x09;
 }
 
-static void spi_read(uint8_t* destination, uint32_t address, uint8_t size) {
-    for(uint8_t i = 0; i < size; i++) {
-        uint32_t at = address + i;
-        if(at >= 0x6000 && at - 0x6000 < 0xEFF)
-            destination[i] = at - 0x6000 < sizeof(pro_factory_data) ?
-                                 pro_factory_data[at - 0x6000] : 0;
-        else if(at >= 0x8000 && at - 0x8000 < 0x3F)
-            destination[i] = at - 0x8000 < sizeof(pro_user_data) ?
-                                 pro_user_data[at - 0x8000] : 0;
-        else
-            destination[i] = 0xFF;
-    }
-}
-
 static void receive(const uint8_t* packet, size_t size) {
-    if(size < 2) return;
-    if(packet[0] == 0x80) {
-        if(packet[1] == 0x01) identify();
-        else {
-            uint8_t report[PRO_PACKET] = {0};
-            report[0] = packet[1] == 0x04 ? 0x30 : 0x81;
-            report[1] = packet[1];
-            queue_reply(report);
-            if(packet[1] == 0x04) ready = true;
-        }
-    } else if(packet[0] == 0x01 && size >= 12) {
-        uint8_t command = packet[10];
-        uint8_t report[PRO_PACKET] = {0};
-        report[0] = 0x21;
-        report[1] = counter;
-        memcpy(&report[2], &input[2], 11);
-        report[13] = 0x80;
-        report[14] = command;
-        if(command == 0x02) {
-            report[13] = 0x82;
-            memcpy(&report[15], device_info, sizeof(device_info));
-        } else if(command == 0x03 || command == 0x30) {
-            report[15] = packet[11];
-        } else if(command == 0x10 && size >= 16) {
-            uint32_t address = (uint32_t)packet[11] | ((uint32_t)packet[12] << 8) |
-                               ((uint32_t)packet[13] << 16) | ((uint32_t)packet[14] << 24);
-            uint8_t length = packet[15];
-            report[13] = 0x90;
-            memcpy(&report[15], &packet[11], 5);
-            if(length > PRO_PACKET - 20) length = PRO_PACKET - 20;
-            spi_read(&report[20], address, length);
-        } else if(command == 0x31) {
-            report[13] = 0xB0;
-            report[15] = packet[11];
-        }
-        queue_reply(report);
-    }
+    ProProtocolResult result;
+    pro_protocol_receive(packet, size, input, counter, device_info, &result);
+    last_report_id = result.report_id;
+    last_command = result.command;
+    if(result.pairing_step) last_pairing_step = result.pairing_step;
+    if(result.changes_streaming) ready = result.streaming;
+    if(result.has_reply) queue_reply(result.reply);
 }
 
 static void endpoint_callback(usbd_device* device, uint8_t event, uint8_t ep) {
@@ -220,7 +170,6 @@ static usbd_respond configure(usbd_device* device, uint8_t value) {
     connected = true;
     ready = false;
     reply_read = reply_write = 0;
-    identify();
     return usbd_ack;
 }
 
@@ -267,6 +216,7 @@ static void init(usbd_device* device, FuriHalUsbInterface* interface, void* cont
     usb_device = device;
     connected = ready = false;
     reply_read = reply_write = 0;
+    last_report_id = last_command = last_pairing_step = 0;
     device->status.ep0size = PRO_EP0_SIZE;
     usbd_reg_config(device, configure);
     usbd_reg_control(device, control);
@@ -305,6 +255,9 @@ bool pro_usb_start(void) {
 }
 bool pro_usb_connected(void) { return connected; }
 bool pro_usb_ready(void) { return connected && ready; }
+uint8_t pro_usb_last_report_id(void) { return last_report_id; }
+uint8_t pro_usb_last_command(void) { return last_command; }
+uint8_t pro_usb_last_pairing_step(void) { return last_pairing_step; }
 bool pro_usb_send(const ControllerState* state) {
     if(!state || !connected || !usb_device || !write_ready) return false;
     if(furi_semaphore_acquire(write_ready, 0) != FuriStatusOk) return false;
