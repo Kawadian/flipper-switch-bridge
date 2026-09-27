@@ -56,12 +56,19 @@ static void profile_config(GapConfig* config, FuriHalBleProfileParams params) {
     // own BLE identity so Windows does not reuse cached characteristic handles.
     // The official HID profile uses the adjacent address (+1).
     config->mac_address[2] += 2;
+    // Byte 0 is AD_TYPE_COMPLETE_LOCAL_NAME. gap.c skips it for the GATT device
+    // name and sends the whole buffer as the advertising local name. Replacing
+    // that byte removes the name from scans and shifts the visible text.
     char original_name[sizeof(config->adv_name)];
     memcpy(original_name, config->adv_name, sizeof(original_name));
-    if(strncmp(original_name, "Flipper", 7) == 0)
-        snprintf(config->adv_name, sizeof(config->adv_name), "SwitchLink%.6s", original_name + 7);
+    const char* visible = original_name + 1;
+    char* name = config->adv_name + 1;
+    size_t name_size = sizeof(config->adv_name) - 1;
+    // Visible room is 16 characters: "SwitchLink" plus 6 from the custom suffix.
+    if(strncmp(visible, "Flipper", 7) == 0)
+        snprintf(name, name_size, "SwitchLink%.6s", visible + 7);
     else
-        snprintf(config->adv_name, sizeof(config->adv_name), "SwitchLink");
+        snprintf(name, name_size, "SwitchLink");
 }
 
 static uint16_t receive(SerialServiceEvent event, void* context) {

@@ -46,7 +46,7 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
-Flipperで `Apps` → `USB` → `Switch Controller` → `BLE receiver` を選択すると、SwitchなしでBLE接続を試せます。**この版の `.fap` に更新してから** `scan` を再実行し、表示された `SwitchLink ...` のアドレスを使います。最初に `probe` で10秒間接続し、Flipper画面の `BLE: connected` と `RX` の増加を確認します。ペアリングコードがFlipperに表示されたらPC側で承認します。
+Flipperで `Apps` → `USB` → `Switch Controller` → `BLE receiver` を選択すると、SwitchなしでBLE接続を試せます。**この版の `.fap` に更新してから** `scan` を再実行し、表示された `SwitchLink ...` のアドレスを使います。最初に `probe` で10秒間接続し、Flipper画面の `BLE: connected` と `RX` の増加を確認します。初回はFlipperに `Pairing code` と6桁が表示されるので、その数字をPCのプロンプトへ入力します。
 
 ```powershell
 .\.venv\Scripts\flipper-link.exe scan
@@ -117,7 +117,7 @@ flipper-link --address <表示されたアドレス> tap A
 flipper-link --address <表示されたアドレス> hold LEFT 1.5
 ```
 
-FlipperはBLE接続時に画面でペアリングコードの確認を求める場合があります。複数のFlipperが検出されたら `--address` を指定してください。`scan` と `BLE receiver` モードならSwitchなしでBLEの接続と受信を確認できます。映像認識側からは `ControllerLink.connect()` と `send(ControllerState(...))` を使えます。
+初回のBLE接続では、Flipperに表示された6桁の `Pairing code` をPCのプロンプトへ入力します。複数のFlipperが検出されたら `--address` を指定してください。`scan` と `BLE receiver` モードならSwitchなしでBLEの接続と受信を確認できます。映像認識側からは `ControllerLink.connect()` と `send(ControllerState(...))` を使えます。
 
 ```python
 import asyncio
