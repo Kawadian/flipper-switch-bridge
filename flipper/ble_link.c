@@ -10,8 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define HCI_VENDOR_SPECIFIC_DEBUG_EVT_CODE 0xFF
+#ifndef ACI_GATT_ATTRIBUTE_MODIFIED_VSEVT_CODE
 #define ACI_GATT_ATTRIBUTE_MODIFIED_VSEVT_CODE 0x0C01
+#endif
 
 // Same UUIDs as the official serial RX service, without its authenticated-write
 // requirement. Windows on this adapter never finishes that pairing ceremony.
