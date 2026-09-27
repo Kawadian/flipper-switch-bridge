@@ -17,7 +17,10 @@ def install(firmware: Path) -> None:
     for file in source.iterdir():
         if file.is_file() and file.suffix in {".c", ".h"}:
             shutil.copy2(file, destination / file.name)
-    shutil.copy2(source / "fap" / "application.fam", destination / "application.fam")
+    fap = source / "fap"
+    shutil.copy2(fap / "application.fam", destination / "application.fam")
+    for icon in fap.glob("*.png"):
+        shutil.copy2(icon, destination / icon.name)
     print(f"Installed {destination}; run ./fbt fap_switch_controller")
 
 

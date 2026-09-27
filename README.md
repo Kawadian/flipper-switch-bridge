@@ -54,7 +54,10 @@ Flipperで `Apps` → `USB` → `Switch Controller` → `BLE receiver` を選択
 .\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" tap A
 .\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" tap LEFT
 .\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" hold R 1.5
+.\.venv\Scripts\flipper-link.exe --address "表示されたアドレス" play
 ```
+
+キーボードで連続入力するときは `play` を使います。ターミナルは矢印キーや、キーを離したタイミングを受け取れないことが多いので、前面のウィンドウが押下と解放を見てSwitchへ送ります。矢印キーは十字キー、`W A S D` は左スティック、`I J K L` は右スティック、SpaceはA、`B` `X` `Y` は同名のボタンです。残りの割り当てはウィンドウに表示します。ウィンドウが背面になるかEscapeを押すと、押したままの入力を中立に戻します。Linuxでは別途 `python3-tk` が必要です。
 
 `scan` で1台だけ見つかった場合は `--address` を省略できます。`probe` 中は接続を保ち、正常終了すると切断します。`tap` と `hold` もコマンド終了後に切断する仕様です。`BLE receiver` で画面の `RX` が増えれば、PC→Flipperの通信はできています。`BLE -> USB Pro` なら、受け取った入力がSwitch向けのUSBコントローラーにも送られます。`SwitchLink ...` が見つからない場合は、新しい `.fap`、モード起動、両機器のBluetooth設定を確認してください。
 
@@ -115,7 +118,10 @@ flipper-link scan
 flipper-link --address <表示されたアドレス> probe 10
 flipper-link --address <表示されたアドレス> tap A
 flipper-link --address <表示されたアドレス> hold LEFT 1.5
+flipper-link --address <表示されたアドレス> play
 ```
+
+`play` はフォーカスがある間だけキーボードを監視します。十字キーの確認はこちらを使います。
 
 接続にペアリングコードは使いません。複数のFlipperが検出されたら `--address` を指定してください。`scan` と `BLE receiver` モードならSwitchなしでBLEの接続と受信を確認できます。映像認識側からは `ControllerLink.connect()` と `send(ControllerState(...))` を使えます。
 
