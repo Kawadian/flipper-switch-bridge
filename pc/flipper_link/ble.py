@@ -26,46 +26,6 @@ async def find_flipper(address: str | None = None, timeout: float = 8.0):
     return matches[0]
 
 
-def _address_int(address: str) -> int:
-    return int(address.replace(":", "").replace("-", ""), 16)
-
-
-async def ensure_paired(address: str) -> None:
-    """Pair with numeric comparison. Serial RX requires an authenticated link."""
-    from winrt.windows.devices.bluetooth import BluetoothLEDevice
-    from winrt.windows.devices.enumeration import (
-        DevicePairingKinds,
-        DevicePairingResultStatus,
-    )
-
-    radio = await BluetoothLEDevice.from_bluetooth_address_async(_address_int(address))
-    if radio is None:
-        raise RuntimeError(f"Windows could not open {address}")
-    pairing = radio.device_information.pairing
-    if pairing.is_paired:
-        return
-
-    def on_requested(_sender, args) -> None:
-        if args.pairing_kind != DevicePairingKinds.CONFIRM_PIN_MATCH:
-            print(f"Unexpected pairing request: {args.pairing_kind}", flush=True)
-            return
-        print(f"Flipper is showing {args.pin}. Press OK on Flipper.", flush=True)
-        args.accept()
-
-    token = pairing.custom.add_pairing_requested(on_requested)
-    try:
-        result = await pairing.custom.pair_async(DevicePairingKinds.CONFIRM_PIN_MATCH)
-    finally:
-        pairing.custom.remove_pairing_requested(token)
-    if result.status not in (
-        DevicePairingResultStatus.PAIRED,
-        DevicePairingResultStatus.ALREADY_PAIRED,
-    ):
-        raise RuntimeError(
-            f"Pairing failed: {result.status.name}. "
-            "Press OK on Flipper when it shows Verify code.")
-
-
 class ControllerLink:
     def __init__(self, client: BleakClient):
         self._client = client
@@ -98,7 +58,6 @@ class ControllerLink:
     @asynccontextmanager
     async def connect(cls, address: str | None = None) -> AsyncIterator["ControllerLink"]:
         device = await find_flipper(address)
-        await ensure_paired(device.address)
         async with BleakClient(device, pair=False, timeout=30.0) as client:
             if client.services.get_characteristic(SERIAL_RX_UUID) is None:
                 raise RuntimeError("Serial RX characteristic missing: is the BLE app running?")
