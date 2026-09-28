@@ -3,35 +3,174 @@
 import asyncio
 import sys
 import threading
+from collections import deque
 from collections.abc import Awaitable, Callable
 
 from .ble import ControllerLink
 from .keys import HELP_TEXT, KeyboardSession, describe_state, hat_directions
 from .protocol import Button, ControllerState
 
-# X11 auto-repeat emits a release just before the next press. Wait that pair out.
-# Windows reports the real release, so forward it on the next turn.
-RELEASE_DELAY_MS = 40 if sys.platform.startswith("linux") else 0
+# Auto-repeat inserts a KeyRelease before the next KeyPress. On X11 the pair is
+# almost immediate; on Windows the release is delivered and the repeat arrives
+# about one repeat interval later. Wait long enough for that press to cancel
+# the release. A real release still follows once the key is physically up.
+RELEASE_DELAY_MS = 50
+# Flipper drops BLE input after 500ms of silence. Refresh held states well inside that.
 RESEND_SECONDS = 0.1
+# A press and its release can be queued while a GATT write is in flight. Keep the
+# press on the wire long enough for the Switch to sample an 8ms USB poll.
+MIN_HOLD_SECONDS = 0.05
+_MAX_QUEUED_STATES = 32
 
 Send = Callable[[ControllerState], Awaitable[None]]
-GetState = Callable[[], ControllerState]
 
 
-async def pump_states(get_state: GetState, stop: threading.Event, send: Send, *,
-                      interval: float = RESEND_SECONDS, poll: float = 0.02) -> None:
-    """Send on every change, and repeat a held state so the Flipper watchdog stays armed."""
-    last = None
+def releases_controls(previous: ControllerState, nxt: ControllerState) -> bool:
+    """True when nxt lets go of a button, a D-pad direction, or stick deflection."""
+    if int(previous.buttons) & ~int(nxt.buttons) & 0x3FFF:
+        return True
+    if hat_directions(previous.hat) - hat_directions(nxt.hat):
+        return True
+    for axis in ("lx", "ly", "rx", "ry"):
+        if _axis_released(getattr(previous, axis), getattr(nxt, axis)):
+            return True
+    return False
+
+
+def _axis_released(before: int, after: int) -> bool:
+    if before == 128 or before == after:
+        return False
+    if after == 128:
+        return True
+    # A full reversal (left to right) is a new press, not a let-go.
+    if (before < 128) != (after < 128):
+        return False
+    return abs(after - 128) < abs(before - 128)
+
+
+def keymap_bit_is_set(keymap: bytes, keycode: int) -> bool:
+    if keycode < 0 or keycode >= 256 or len(keymap) <= keycode // 8:
+        return False
+    return bool(keymap[keycode // 8] & (1 << (keycode % 8)))
+
+
+def key_is_physically_down(keycode: int) -> bool:
+    """Whether the finger is still on this key. False when the OS cannot say."""
+    if not keycode:
+        return False
+    if sys.platform.startswith("win"):
+        return _windows_key_is_down(keycode)
+    if sys.platform.startswith("linux"):
+        return _x11_key_is_down(keycode)
+    return False
+
+
+def _windows_key_is_down(keycode: int) -> bool:
+    import ctypes
+    user32 = ctypes.windll.user32
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    # Tk's Windows keycode is the virtual-key code. The high bit is the live state.
+    return bool(user32.GetAsyncKeyState(int(keycode)) & 0x8000)
+
+
+_x11 = None
+_x11_display = None
+_x11_unavailable = False
+
+
+def _x11_key_is_down(keycode: int) -> bool:
+    global _x11, _x11_display, _x11_unavailable
+    if _x11_unavailable or not 0 < keycode < 256:
+        return False
+    try:
+        import ctypes
+        if _x11_display is None:
+            library = ctypes.CDLL("libX11.so.6")
+            library.XOpenDisplay.argtypes = [ctypes.c_char_p]
+            library.XOpenDisplay.restype = ctypes.c_void_p
+            library.XQueryKeymap.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            library.XQueryKeymap.restype = ctypes.c_int
+            display = library.XOpenDisplay(None)
+            if not display:
+                _x11_unavailable = True
+                return False
+            _x11 = library
+            _x11_display = display
+        keymap = ctypes.create_string_buffer(32)
+        if _x11.XQueryKeymap(_x11_display, keymap) == 0:
+            return False
+        return keymap_bit_is_set(keymap.raw, keycode)
+    except (OSError, AttributeError):
+        _x11_unavailable = True
+        return False
+
+
+class StateQueue:
+    """States to transmit, in order. The latest value is what the window shows."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._items: deque[ControllerState] = deque()
+        self._latest = ControllerState()
+
+    def publish(self, state: ControllerState) -> None:
+        with self._lock:
+            previous = self._items[-1] if self._items else self._latest
+            self._latest = state
+            if state == previous:
+                return
+            if len(self._items) >= _MAX_QUEUED_STATES:
+                self._items.popleft()
+            self._items.append(state)
+
+    def latest(self) -> ControllerState:
+        with self._lock:
+            return self._latest
+
+    def peek(self) -> ControllerState:
+        with self._lock:
+            return self._items[0] if self._items else self._latest
+
+    def pending(self) -> bool:
+        with self._lock:
+            return bool(self._items)
+
+    def acknowledge(self, state: ControllerState) -> None:
+        with self._lock:
+            if self._items and self._items[0] == state:
+                self._items.popleft()
+
+
+async def pump_states(states: StateQueue, stop: threading.Event, send: Send, *,
+                      interval: float = RESEND_SECONDS, min_hold: float = MIN_HOLD_SECONDS,
+                      poll: float = 0.02) -> None:
+    """Send every transition, hold a new press briefly, and repeat holds for the watchdog."""
+    last_sent: ControllerState | None = None
     last_sent_at = 0.0
+    held_since = 0.0
     loop = asyncio.get_running_loop()
     while not stop.is_set():
-        state = get_state()
         now = loop.time()
-        active = state != ControllerState()
-        if state != last or (active and now - last_sent_at >= interval):
-            await send(state)
-            last = state
-            last_sent_at = loop.time()
+        nxt = states.peek()
+        if (last_sent is not None and nxt != last_sent and releases_controls(last_sent, nxt)
+                and now < held_since + min_hold):
+            if last_sent != ControllerState() and now - last_sent_at >= interval:
+                await send(last_sent)
+                last_sent_at = loop.time()
+            await asyncio.sleep(poll)
+            continue
+        changed = nxt != last_sent
+        if changed or (nxt != ControllerState() and now - last_sent_at >= interval):
+            await send(nxt)
+            sent_at = loop.time()
+            if changed:
+                held_since = sent_at
+            last_sent = nxt
+            last_sent_at = sent_at
+            states.acknowledge(nxt)
+            await asyncio.sleep(0 if states.pending() else poll)
+            continue
         await asyncio.sleep(poll)
 
 
@@ -41,19 +180,17 @@ class LinkBridge:
     def __init__(self, address: str | None) -> None:
         self.address = address
         self.stop = threading.Event()
+        self.states = StateQueue()
         self._lock = threading.Lock()
-        self._state = ControllerState()
         self._status = "idle"
         self._message = "未接続"
         self.thread: threading.Thread | None = None
 
     def get_state(self) -> ControllerState:
-        with self._lock:
-            return self._state
+        return self.states.latest()
 
     def update(self, state: ControllerState) -> None:
-        with self._lock:
-            self._state = state
+        self.states.publish(state)
 
     def snapshot(self) -> tuple[str, str]:
         with self._lock:
@@ -94,7 +231,7 @@ class LinkBridge:
         try:
             async with ControllerLink.connect(self.address) as link:
                 self._set_status("connected", "接続しました。このウィンドウのキーをSwitchへ送っています")
-                await pump_states(self.get_state, self.stop, link.send)
+                await pump_states(self.states, self.stop, link.send)
         except Exception as error:
             if self.stop.is_set():
                 self._set_status("stopped", "切断しました")
@@ -114,6 +251,7 @@ class KeyboardApp:
         self.session = KeyboardSession()
         self.bridge = LinkBridge(address)
         self._jobs: dict[str, str] = {}
+        self._poll_job: str | None = None
         self._alive = True
         self._closing = False
 
@@ -167,7 +305,7 @@ class KeyboardApp:
         root.bind("<Button-1>", lambda _event: root.focus_force(), add="+")
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         root.after(50, root.focus_force)
-        root.after(200, self._poll_link)
+        self._poll_job = root.after(200, self._poll_link)
         self._draw(ControllerState())
         if connect:
             self.bridge.start()
@@ -194,6 +332,7 @@ class KeyboardApp:
         key = event.keysym.lower()
         self._cancel_job(key)
         if key == "escape":
+            self._cancel_jobs()
             self.session.clear()
             self._publish()
             return "break"
@@ -205,9 +344,18 @@ class KeyboardApp:
         if not self._alive:
             return "break"
         key = event.keysym.lower()
+        keycode = int(getattr(event, "keycode", 0) or 0)
 
-        def fire(expected=key, original=event.keysym):
+        def fire(expected=key, original=event.keysym, code=keycode):
             self._jobs.pop(expected, None)
+            if not self._alive:
+                return
+            # Repeat delivers KeyRelease while the finger is still down. Keep the
+            # button held and look again; the press handler also cancels this timer
+            # when the repeat arrives before it fires.
+            if code and key_is_physically_down(code):
+                self._jobs[expected] = self.root.after(RELEASE_DELAY_MS, fire)
+                return
             if self.session.release(original):
                 self._publish()
 
@@ -242,7 +390,7 @@ class KeyboardApp:
         colors = {"connected": "#4ade80", "error": "#ff5a5a", "connecting": "#e4e4e7"}
         self.link_var.set(message)
         self.link_label.configure(fg=colors.get(status, self._muted))
-        self.root.after(200, self._poll_link)
+        self._poll_job = self.root.after(200, self._poll_link)
 
     def _on_close(self) -> None:
         if self._closing:
@@ -250,6 +398,9 @@ class KeyboardApp:
         self._closing = True
         self._alive = False
         self._cancel_jobs()
+        if self._poll_job is not None:
+            self.root.after_cancel(self._poll_job)
+            self._poll_job = None
         self.session.clear()
         self.bridge.update(ControllerState())
         self.link_var.set("切断中…")
