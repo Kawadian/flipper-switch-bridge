@@ -9,7 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pc"))
-from flipper_link.gui import RELEASE_DELAY_MS, KeyboardApp, LinkBridge, pump_states
+from flipper_link.gui import (
+    RELEASE_DELAY_MS, KeyboardApp, LinkBridge, StateQueue, keymap_bit_is_set, pump_states,
+    releases_controls)
 from flipper_link.protocol import Button, ControllerState, Hat
 
 try:
@@ -19,32 +21,114 @@ except ImportError:
 
 
 class _Event:
-    def __init__(self, keysym, state=0):
+    def __init__(self, keysym, state=0, keycode=0):
         self.keysym = keysym
         self.state = state
+        self.keycode = keycode
+
+
+class ReleaseTests(unittest.TestCase):
+    def test_releasing_a_direction_or_button_is_detected(self):
+        pressed = ControllerState(buttons=Button.A, hat=Hat.UP, lx=0, ly=0)
+        self.assertTrue(releases_controls(pressed, ControllerState()))
+        self.assertTrue(releases_controls(pressed, ControllerState(buttons=Button.A, hat=Hat.UP)))
+        self.assertFalse(releases_controls(
+            ControllerState(hat=Hat.UP), ControllerState(hat=Hat.UP_RIGHT)))
+        self.assertFalse(releases_controls(ControllerState(lx=0), ControllerState(lx=255)))
+        self.assertTrue(releases_controls(ControllerState(lx=0), ControllerState(lx=64)))
+        self.assertFalse(releases_controls(pressed, pressed))
+
+    def test_keymap_bits_follow_x11_layout(self):
+        keymap = bytearray(32)
+        keymap[5] = 1 << 3  # keycode 43
+        self.assertTrue(keymap_bit_is_set(bytes(keymap), 43))
+        self.assertFalse(keymap_bit_is_set(bytes(keymap), 42))
+        self.assertFalse(keymap_bit_is_set(bytes(keymap), 256))
 
 
 class PumpTests(unittest.IsolatedAsyncioTestCase):
     async def test_change_is_sent_once_and_a_hold_repeats(self):
         sent = []
-        holder = {"state": ControllerState()}
+        states = StateQueue()
         stop = threading.Event()
 
         async def send(state):
             sent.append(state)
 
         task = asyncio.create_task(
-            pump_states(lambda: holder["state"], stop, send, interval=0.05, poll=0.005))
+            pump_states(states, stop, send, interval=0.05, min_hold=0, poll=0.005))
         await asyncio.sleep(0.03)
         self.assertEqual(sent, [ControllerState()])
-        holder["state"] = ControllerState(buttons=Button.A)
+        states.publish(ControllerState(buttons=Button.A))
         await asyncio.sleep(0.03)
         self.assertIn(ControllerState(buttons=Button.A), sent)
         await asyncio.sleep(0.12)
         self.assertGreaterEqual(sent.count(ControllerState(buttons=Button.A)), 2)
-        holder["state"] = ControllerState()
+        states.publish(ControllerState())
         await asyncio.sleep(0.03)
         self.assertEqual(sent[-1], ControllerState())
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+
+    async def test_a_press_queued_during_a_write_is_still_sent(self):
+        sent = []
+        states = StateQueue()
+        stop = threading.Event()
+        started = asyncio.Event()
+        release_send = asyncio.Event()
+
+        async def send(state):
+            sent.append(state)
+            if len(sent) == 1:
+                started.set()
+                await release_send.wait()
+
+        task = asyncio.create_task(
+            pump_states(states, stop, send, interval=1, min_hold=0.05, poll=0.005))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        states.publish(ControllerState(buttons=Button.B))
+        states.publish(ControllerState())
+        release_send.set()
+        deadline = time.time() + 1
+        pressed = ControllerState(buttons=Button.B)
+        while time.time() < deadline and not (
+                pressed in sent and sent[-1] == ControllerState() and len(sent) >= 3):
+            await asyncio.sleep(0.01)
+        self.assertEqual(sent[0], ControllerState())
+        self.assertLess(sent.index(pressed), len(sent) - 1)
+        self.assertEqual(sent[-1], ControllerState())
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+
+    async def test_short_press_stays_down_long_enough_to_sample(self):
+        sent = []
+        states = StateQueue()
+        stop = threading.Event()
+        pressed_at = None
+
+        async def send(state):
+            nonlocal pressed_at
+            sent.append((time.monotonic(), state))
+            if state.buttons & Button.A and pressed_at is None:
+                pressed_at = time.monotonic()
+
+        task = asyncio.create_task(
+            pump_states(states, stop, send, interval=1, min_hold=0.08, poll=0.005))
+        await asyncio.sleep(0.02)
+        states.publish(ControllerState(buttons=Button.A))
+        states.publish(ControllerState())
+        deadline = time.time() + 1
+
+        def released_after_press():
+            return pressed_at is not None and any(
+                stamp > pressed_at and state == ControllerState() for stamp, state in sent)
+
+        while time.time() < deadline and not released_after_press():
+            await asyncio.sleep(0.005)
+        self.assertIsNotNone(pressed_at)
+        released_at = next(stamp for stamp, state in sent if stamp > pressed_at
+                           and state == ControllerState())
+        self.assertGreaterEqual(released_at - pressed_at, 0.07)
         stop.set()
         await asyncio.wait_for(task, timeout=1)
 
@@ -159,6 +243,25 @@ class WindowTests(unittest.TestCase):
         self.app._on_press(_Event("y"))
         self.app._on_press(_Event("Escape"))
         self.assertEqual(self.app.session.state, ControllerState())
+
+    def test_autorepeat_release_keeps_the_button_while_the_key_is_down(self):
+        checks = {"count": 0}
+
+        def still_down(keycode):
+            self.assertEqual(keycode, 65)
+            checks["count"] += 1
+            return checks["count"] == 1
+
+        self.app._on_press(_Event("space", keycode=65))
+        with patch("flipper_link.gui.key_is_physically_down", still_down):
+            self.app._on_release(_Event("space", keycode=65))
+            time.sleep(RELEASE_DELAY_MS / 1000 + 0.05)
+            self.root.update()
+            self.assertTrue(self.app.session.state.buttons & Button.A)
+            time.sleep(RELEASE_DELAY_MS / 1000 + 0.05)
+            self.root.update()
+        self.assertGreaterEqual(checks["count"], 2)
+        self.assertFalse(self.app.session.state.buttons & Button.A)
 
 
 if __name__ == "__main__":
