@@ -52,3 +52,4 @@ jobs:
           name: switch_controller-fap
           path: ${{ runner.temp }}/switch_controller.fap
           if-no-files-found: error
+          retention-days: 14
