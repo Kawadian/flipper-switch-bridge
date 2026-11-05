@@ -38,3 +38,4 @@ jobs:
           name: flipper-switch-update
           path: ${{ runner.temp }}/flipper-switch-update.tgz
           if-no-files-found: error
+          retention-days: 14
